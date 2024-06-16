@@ -19,12 +19,12 @@ def get_names_from_group(group_name):
     Returns:
         names (list): List of names of the deputies.'''
     df_deputies_hist = pd.read_csv("deputes-historique.csv")
-    df_last_legi = df_deputies_hist[df_deputies_hist["datePriseFonction"] == "2022-06-22"].copy()
+    df_last_legi = df_deputies_hist[df_deputies_hist["datePriseFonction"] >= "2022-06-22"].copy()
     names = []
     for idx, fullname in df_last_legi[df_last_legi["groupe"] == group_name][["prenom", "nom"]].iterrows():
-        names.append(unidecode(fullname[0].lower()).replace(" ", "").replace("-", "")
-                     + " " +
-                     unidecode(fullname[1].lower()).replace(" ", "").replace("-", ""))
+        prenom = unidecode(fullname.iloc[0].lower()).replace(" ", "").replace("-", "").replace("'", "").replace("/", "").replace("(", "").replace(")", "")
+        nom = unidecode(fullname.iloc[1].lower()).replace(" ", "").replace("-", "").replace("'", "").replace("/", "").replace("(", "").replace(")", "")
+        names.append(prenom + " " + nom)
     return names
 
 def get_deputy_votes_page(politic_name):
@@ -50,7 +50,7 @@ def get_deputy_votes_page(politic_name):
         politic_dict = {"html_page": politic_html, "url": url_politic, "name": politic_name}
         return politic_dict
     else:
-        raise ValueError(f"Politic {politic_name} not found")
+        raise ValueError(f"Politic {politic_name} : page not found")
 
 def get_votes_from_politic_page(politic_dict):
     ''' Extracts the voting records from the html page of a deputy.
@@ -84,8 +84,16 @@ def get_politic_votes(politic_name):
         politic_name (str): Name of the deputy.
     Returns:
         df (pd.DataFrame): DataFrame containing the voting records of the deputy.'''
+    # Check if data already exists locally
+    filename = f"temp_data/{politic_name.replace(' ', '_')}.csv"
+    if os.path.exists(filename):
+        return pd.read_csv(filename)
+    
+    # If not, fetch and save data
     politic_html = get_deputy_votes_page(politic_name)
     df = get_votes_from_politic_page(politic_html)
+    os.makedirs("temp_data", exist_ok=True)
+    df.to_csv(filename, index=False)
     return df
 
 def write_politic_votes(politic_name):
@@ -111,9 +119,37 @@ def write_group_votes(group_name):
             df = pd.concat([df, df_politic])
 
         except ValueError:
-            print(f"Politic {name} not found")
+            print(f"Politic {name} : data not found")
             continue
     df.to_csv(f'{group_name.replace(" ", "_").lower()}.csv', index=False)
+
+def get_all_group_names():
+    ''' Fetches the list of politc group.'''
+    df_deputies_hist = pd.read_csv("deputes-historique.csv")
+    df_last_legi = df_deputies_hist[df_deputies_hist["datePriseFonction"] >= "2022-06-22"].copy()
+    group_names = df_last_legi["groupe"].unique().tolist()
+    return group_names
+
+def write_votes_summary_by_category(vote_category):
+    ''' Writes the voting records of a all group for a specific category of laws to a csv file.
+
+    Args:
+        vote_category (str): Name of the low category.'''
+    group_names = get_all_group_names()
+    df_all_groups = pd.DataFrame()
+    for group_name in group_names:
+        deputy_names = get_names_from_group(group_name)
+        for name in deputy_names:
+            try:
+                df_politic = get_politic_votes(name)
+                df_politic['group_name'] = group_name
+                df_all_groups = pd.concat([df_all_groups, df_politic], ignore_index=True)
+            except ValueError:
+                print(f"Politic {name} not found")
+                continue
+    df_filtered = df_all_groups[df_all_groups["vote_category"] == vote_category]
+    summary_df = df_filtered.groupby(["vote_date", "vote_topic", "for_or_against", "group_name"]).size().reset_index(name="count")
+    summary_df.to_csv(f'{vote_category.replace(" ", "_").lower()}.csv', index=False)
 
 if __name__ == "__main__":
     # Working example
@@ -124,9 +160,11 @@ if __name__ == "__main__":
     group_name = "Rassemblement National"
     write_group_votes(group_name)
 
+    # Working example
+    vote_category = "environnement"
+    write_votes_summary_by_category(group_name)
+
     # TODO:
     #   - [] Add a column with the social vote to emphasize the antisocial votes of the deputies.
     #   - [X] Add a categories of the votes such as "social", "environmental", "economic", "security", etc.
     #   - [] Add a way to build a nice one page visualization of the dangerous votes of the deputies.
-
-
